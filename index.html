@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>侃侃雅思 - 口语训练助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .chat-bubble-user { background-color: #e0f2fe; border-radius: 1rem; padding: 0.5rem 1rem; margin: 0.5rem 0; align-self: flex-end; max-width: 80%; }
+        .chat-bubble-ai { background-color: #f1f5f9; border-radius: 1rem; padding: 0.5rem 1rem; margin: 0.5rem 0; align-self: flex-start; max-width: 80%; }
+        .error-highlight { background-color: #fee2e2; border-left: 3px solid #f87171; padding: 0.25rem 0.5rem; margin: 0.25rem 0; font-size: 0.875rem; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="max-w-2xl mx-auto p-4">
+        <h1 class="text-3xl font-bold text-center text-blue-600 mb-4">侃侃雅思</h1>
+        <div id="chatContainer" class="bg-white rounded-lg shadow-md h-96 overflow-y-auto p-4 flex flex-col space-y-2"></div>
+        <div class="mt-4 flex gap-2">
+            <input type="text" id="messageInput" placeholder="输入或点击麦克风说话..." class="flex-1 border rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <button id="sendBtn" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600">发送</button>
+            <button id="micBtn" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600">🎤</button>
+            <button id="examBtn" class="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600">模拟考官</button>
+        </div>
+        <div class="mt-2 text-sm text-gray-500">
+            <label class="inline-flex items-center">
+                <input type="checkbox" id="autoSpeak" class="mr-1"> AI自动朗读回复
+            </label>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let userId = localStorage.getItem('userId');
+        if (!userId) {
+            userId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+            localStorage.setItem('userId', userId);
+        }
+        let sessionId = localStorage.getItem('sessionId');
+        if (!sessionId) {
+            sessionId = 'session_' + Date.now();
+            localStorage.setItem('sessionId', sessionId);
+        }
+
+        const chatContainer = document.getElementById('chatContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const micBtn = document.getElementById('micBtn');
+        const examBtn = document.getElementById('examBtn');
+        const autoSpeakCheck = document.getElementById('autoSpeak');
+
+        let recognition = null;
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.lang = 'en-US';  // 雅思口语主要英文
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                messageInput.value = transcript;
+                sendMessage(transcript);
+            };
+            recognition.onerror = (event) => {
+                console.error('语音识别错误', event.error);
+                alert('语音识别失败，请检查麦克风权限');
+            };
+        } else {
+            micBtn.disabled = true;
+            micBtn.title = '当前浏览器不支持语音识别';
+        }
+
+        micBtn.addEventListener('click', () => {
+            if (recognition) {
+                recognition.start();
+            }
+        });
+
+        sendBtn.addEventListener('click', () => {
+            const text = messageInput.value.trim();
+            if (text) {
+                sendMessage(text);
+                messageInput.value = '';
+            }
+        });
+
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendBtn.click();
+            }
+        });
+
+        async function sendMessage(text) {
+            addMessageToChat('user', text);
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId, session_id: sessionId, message: text })
+                });
+                const data = await response.json();
+                if (data.reply) {
+                    addMessageToChat('ai', data.reply);
+                    if (autoSpeakCheck.checked) {
+                        speakText(data.reply);
+                    }
+                }
+                if (data.errors && data.errors.length) {
+                    showErrors(data.errors);
+                }
+            } catch (err) {
+                console.error(err);
+                addMessageToChat('ai', '抱歉，网络错误，请稍后重试。');
+            }
+        }
+
+        function addMessageToChat(role, content) {
+            const div = document.createElement('div');
+            div.className = role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai';
+            div.textContent = content;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function showErrors(errors) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-highlight';
+            errorDiv.innerHTML = '<strong>💡 改进建议：</strong><br>' + errors.map(e => `• "${e.original}" → "${e.correction}" (${e.type})`).join('<br>');
+            chatContainer.appendChild(errorDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function speakText(text) {
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'en-US';
+                utterance.rate = 0.9;
+                window.speechSynthesis.cancel(); // 避免重叠
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        examBtn.addEventListener('click', async () => {
+            examBtn.disabled = true;
+            examBtn.textContent = '评估中...';
+            try {
+                const response = await fetch('/api/exam', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId })
+                });
+                const report = await response.json();
+                if (report.fluency !== undefined) {
+                    showReport(report);
+                } else {
+                    alert('评估失败，请稍后再试');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('评估请求失败');
+            } finally {
+                examBtn.disabled = false;
+                examBtn.textContent = '模拟考官';
+            }
+        });
+
+        function showReport(report) {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg p-6 max-w-md w-full">
+                    <h2 class="text-xl font-bold mb-4">模拟考试报告</h2>
+                    <div class="space-y-2">
+                        <div>流利度: ${report.fluency} / 9</div>
+                        <div>词汇: ${report.lexical} / 9</div>
+                        <div>语法: ${report.grammar} / 9</div>
+                        <div class="mt-4">评语: ${report.comment}</div>
+                        <div class="mt-2"><strong>改进建议：</strong><ul>${report.suggestions.map(s => `<li>• ${s}</li>`).join('')}</ul></div>
+                    </div>
+                    <button class="mt-6 bg-blue-500 text-white px-4 py-2 rounded" onclick="this.parentElement.parentElement.remove()">关闭</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // 首次加载时，如果尚未有对话，可以发送一条欢迎消息（可选）
+        if (chatContainer.children.length === 0) {
+            addMessageToChat('ai', '你好！我是你的雅思口语训练师侃侃。请先告诉我你的姓名和年龄，我们可以开始对话~');
+        }
+    </script>
+</body>
+</html>
